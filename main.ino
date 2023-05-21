@@ -2,7 +2,6 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1351.h>
 #include <SPI.h>
-#include "page.h"
 #include "types.h"
 
 // in millis 
@@ -13,7 +12,7 @@
 #define BLOCK_HEIGHT 	11
 #define BLOCK_WIDTH 	7
 #define HEIGHT_OFFSET 	10
-// #define NULL ((void*)0)
+#define NULL nullptr
 #define ENOMEM      -1
 #define CHUNK_SIZE 	77
 #define NO_HEAD     -2
@@ -55,7 +54,7 @@ struct page
     struct page *next, *prev;
 };
 
-struct page *head = nullptr;
+struct page *head = NULL;
 struct page *alloc_head(u8 *chunk) {
 
     // all new pages are links
@@ -149,7 +148,7 @@ char* uint8_to_hex(u8 ascii) {
 
 // TODO: REFACTOR
 void draw_block(u8 page_number, u8* chunk) {
-	char* fmt_str = (char*)malloc(25 * sizeof(char));
+	char* fmt_str = (char*) malloc(20 * sizeof(char));
 	sprintf(fmt_str, "Chunk Page: %i", page_number);
 	oled.println(fmt_str);
 
@@ -190,11 +189,13 @@ void loop() {
 	oled.setTextColor(COLOR_WHITE);
 	//draw_block(1, header);
 
-	create_five_pages();
-
-    if (head == nullptr) {
+    if (head == NULL) {
         oled.print("No pages to display");
     }
+    delay(1000);
+
+	create_five_pages();
+
 
 	for (struct page* p = head; p->next != NULL; p = p->next) {
 		draw_block(p->page_number, p->chunk);

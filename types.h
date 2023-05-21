@@ -1,6 +1,3 @@
-// I hate the uasldkfjasdf_t crap
-
-#define NULL ((void*)0)
 
 typedef signed int i8 __attribute__((__mode__(__QI__)));
 typedef unsigned int u8 __attribute__((__mode__(__QI__)));
