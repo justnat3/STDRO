@@ -13,6 +13,10 @@
 #define BLOCK_HEIGHT 	11
 #define BLOCK_WIDTH 	7
 #define HEIGHT_OFFSET 	10
+// #define NULL ((void*)0)
+#define ENOMEM      -1
+#define CHUNK_SIZE 	77
+#define NO_HEAD     -2
 
 
 // The SSD1351 is connected like this (plus VCC plus GND)
@@ -32,8 +36,37 @@ const uint16_t COLOR_MAGENTA  = 0xF81F;
 const uint16_t COLOR_YELLOW   = 0xFFE0;
 const uint16_t COLOR_WHITE 	  = 0xFFFF;
 
-// incoming serial_rx traffic
+/*
+ * this is a simple linked list, the way I am thinking is that I want to load a "chunk"
+ * into memory for the lcd, when the user selects the next chunk we need to look at the next* page
+ * then when we reach the end of the pages we should rollover to the first page. head*
+ * 
+ *             If there are 2 pages
+ * ----------------------------------------------------- *
+ * tail<-head->next             head<-tail->next(head)
+ *        |             where           |
+ * tail<-prev                   head<-prev 
+*/
+
+struct page
+{
+    u8 *chunk;
+	u8 page_number;
+    struct page *next, *prev;
+};
+
 struct page *head = nullptr;
+struct page *alloc_head(u8 *chunk) {
+
+    // all new pages are links
+    struct page *link = 
+        (struct page*) malloc(CHUNK_SIZE * sizeof(struct page));
+
+    link->next = NULL;
+    link->prev = NULL;
+    link->chunk = chunk;
+    return link;
+}
 
 Adafruit_SSD1351 oled =
     Adafruit_SSD1351(
@@ -44,6 +77,22 @@ Adafruit_SSD1351 oled =
         PIN_DC_RS,
         PIN_RES_RST);
 
+i8 add_page(struct page* head, u8 *chunk, u8 page_number)
+{
+    struct page *link = 
+        (struct page*) malloc(CHUNK_SIZE * sizeof(struct page));
+    
+    link->page_number = page_number;
+    
+    if (link == NULL) return ENOMEM;
+    if (head == NULL) return NO_HEAD;
+
+    // there is no list end
+    if (head->prev == NULL) {
+        head->prev = link;
+        head->next = link;
+    }
+}
 
 void clear_screen() {
     oled.fillScreen(COLOR_BLACK);
