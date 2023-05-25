@@ -12,28 +12,29 @@
 #define BLOCK_HEIGHT 	11
 #define BLOCK_WIDTH 	7
 #define HEIGHT_OFFSET 	10
-#define NULL nullptr
+#define NULL nullptr 
 #define ENOMEM      -1
-#define CHUNK_SIZE 	77
+#define CHUNK_SIZE 	BLOCK_HEIGHT*BLOCK_WIDTH
 #define NO_HEAD     -2
+#define SECOND 1000
 
 
 // The SSD1351 is connected like this (plus VCC plus GND)
-const uint8_t PIN_SCL_SCK     = 13;
-const uint8_t PIN_SDA_MOSI    = 11;
-const uint8_t PIN_CS_SS       = 10;
-const uint8_t PIN_RES_RST     = 9;
-const uint8_t PIN_DC_RS       = 8;
-const uint8_t PIN_RESET_RX_BUFF = 2;
+const u8 PIN_SCL_SCK     = 13;
+const u8 PIN_SDA_MOSI    = 11;
+const u8 PIN_CS_SS       = 10;
+const u8 PIN_RES_RST     = 9;
+const u8 PIN_DC_RS       = 8;
+const u8 PIN_RESET_RX_BUFF = 2;
 
-const uint16_t COLOR_BLACK 	  = 0x0000;
-const uint16_t COLOR_BLUE 	  = 0x001F;
-const uint16_t COLOR_RED 	  = 0xF800;
-const uint16_t COLOR_GREEN 	  = 0x07E0;
-const uint16_t COLOR_CYAN 	  = 0x07FF;
-const uint16_t COLOR_MAGENTA  = 0xF81F;
-const uint16_t COLOR_YELLOW   = 0xFFE0;
-const uint16_t COLOR_WHITE 	  = 0xFFFF;
+const u16 COLOR_BLACK 	  = 0x0000;
+const u16 COLOR_BLUE 	  = 0x001F;
+const u16 COLOR_RED 	  = 0xF800;
+const u16 COLOR_GREEN 	  = 0x07E0;
+const u16 COLOR_CYAN 	  = 0x07FF;
+const u16 COLOR_MAGENTA  = 0xF81F;
+const u16 COLOR_YELLOW   = 0xFFE0;
+const u16 COLOR_WHITE 	  = 0xFFFF;
 
 /*
  * this is a simple linked list, the way I am thinking is that I want to load a "chunk"
@@ -49,21 +50,22 @@ const uint16_t COLOR_WHITE 	  = 0xFFFF;
 
 struct page
 {
-    u8 *chunk;
+    int *chunk;
 	u8 page_number;
     struct page *next, *prev;
 };
 
 struct page *head = NULL;
-struct page *alloc_head(u8 *chunk) {
+struct page *alloc_head(int *chunk) {
 
     // all new pages are links
-    struct page *link = 
-        (struct page*) malloc(CHUNK_SIZE * sizeof(struct page));
+    struct page *link = (struct page*) malloc(sizeof(struct page));
 
     link->next = NULL;
     link->prev = NULL;
-    link->chunk = chunk;
+    link->chunk = chunk; // zero allocated chunk
+    link->page_number = 0;
+
     return link;
 }
 
@@ -76,30 +78,65 @@ Adafruit_SSD1351 oled =
         PIN_DC_RS,
         PIN_RES_RST);
 
-i8 add_page(struct page* head, u8 *chunk, u8 page_number)
+// this is just linked list append 
+i8 add_page(struct page* head, int *chunk, u8 page_number)
 {
-    struct page *link = 
-        (struct page*) malloc(CHUNK_SIZE * sizeof(struct page));
-    
+    struct page *tail = head->prev;
+    struct page *link = (struct page*) malloc(sizeof(struct page));
+
+    link->chunk = chunk;
     link->page_number = page_number;
     
     if (link == NULL) return ENOMEM;
     if (head == NULL) return NO_HEAD;
 
-    // there is no list end
-    if (head->prev == NULL) {
-        head->prev = link;
+    // at the start, we only have head so the next node become the tail
+    if (head->prev == NULL || head->next == NULL) {
         head->next = link;
+        head->prev = link;
+        return 0;
     }
-}
 
-void clear_screen() {
-    oled.fillScreen(COLOR_BLACK);
+    // become middle node, making link the last
+    tail->next = link;
+    // head points to tail because its the last node
+    head->prev = link;
+    // link is now the tail so it points to the head
+    link->next = head;
+    // links previous node is the now middle node tail
+    link->prev = tail;
+
+    return 0;
 }
 
 void reset_cursor() {
     oled.setCursor(0, 0);
 }
+
+void free_pages(struct page* head) {
+    struct page* lk;
+    lk = head;
+    head->prev->next = NULL; // last node next should be NULL
+    while (lk->next != NULL) {
+        lk = lk->next;
+        free(lk->prev);
+    }
+    free(head);
+    head = NULL;
+}
+
+void init_head() {
+    int chunk[CHUNK_SIZE] = {0};
+    // zero alloc head
+    head = alloc_head(chunk);
+}
+
+void clear_screen() {
+    reset_cursor();
+    oled.fillScreen(COLOR_BLACK);
+    oled.setTextColor(COLOR_WHITE);
+}
+
 
 void setup() {
     pinMode(PIN_RESET_RX_BUFF, INPUT);
@@ -112,93 +149,95 @@ void setup() {
     oled.setTextColor(COLOR_WHITE);
     oled.setTextSize(1);
 
+    int chunk[CHUNK_SIZE] = {0};
     // zero alloc head
-    head = alloc_head(
-        (u8*) calloc(0, CHUNK_SIZE * sizeof(u8)));
+    head = alloc_head(chunk);
 }
 
 void create_five_pages() {
-	int page_number = 0;
-	for (size_t i = 0; i == 5; i++) {
-		u8 *chunk_data = (u8*) malloc(CHUNK_SIZE * sizeof(u8));
+	for (size_t i = 0; i < 5; i++) {
+        clear_screen();
+		int chunk_data[CHUNK_SIZE] = {0};
 
 		// fill the page
-		for (size_t j = 0; j == 77; j++) {
-			u8 rand = (u8) random(0, 255);
-			chunk_data[i] = rand;
+		for (size_t j = 0; j < CHUNK_SIZE; j++) {
+			chunk_data[j] = (rand() % 254);
 		}
 
-        u8 ret = add_page(head, chunk_data, page_number);
+        u8 ret = add_page(head, chunk_data, (u8)i+1);
 
         if (ret == ENOMEM) {
             clear_screen();
             oled.setTextColor(COLOR_RED);
             oled.println("Out of Memory");
         }
-
-        ++page_number;
 	}
 }
 
-char* uint8_to_hex(u8 ascii) {
-	char* fmt_str = (char*)malloc(sizeof(char*));
-	sprintf(fmt_str, "%02X", ascii);
-	return fmt_str;
+char** chunk_to_ascii(int *ascii) {
+    char **str = (char**) malloc(CHUNK_SIZE*sizeof(char*));
+
+    for (size_t i = 0; i < CHUNK_SIZE; i++) {
+        int size = snprintf(NULL, 0, "%02X", ascii[i]);
+        char *fmt_str = (char*) malloc(size+1);
+        sprintf(fmt_str, "%02X", ascii[i]);
+        str[i] = fmt_str;
+    }
+
+    return str;
 }
 
 // TODO: REFACTOR
-void draw_block(u8 page_number, u8* chunk) {
-	char* fmt_str = (char*) malloc(20 * sizeof(char));
-	sprintf(fmt_str, "Chunk Page: %i", page_number);
-	oled.println(fmt_str);
+void draw_block(u8 page_number, int *chunk) {
+    // render the header 
+	char* header = (char*) malloc(14 * sizeof(char));
+	sprintf(header, "Chunk Page: %i", page_number);
+    char** ascii = chunk_to_ascii(chunk);
 
-	for (size_t i = 0; i <= BLOCK_HEIGHT-1; i++) {
+    // render the block
+    oled.println(header);
+	for (size_t i = 0; i < BLOCK_HEIGHT; i++) {
         // set the cursor to the next row
 		oled.setCursor(0, oled.getCursorY() + HEIGHT_OFFSET);
 
-		for (size_t j = 0; j <= BLOCK_WIDTH-1; j++) {
-			char* ascii = uint8_to_hex(*chunk);
-
-			oled.print(ascii);
-			oled.print(" ");
-
-			// stored in vidmem, likely can free it here
-			free(&ascii);
+		for (size_t j = 0; j < BLOCK_WIDTH; j++) {
+            oled.print(ascii[j]);
+            oled.print(" ");
 		}
 	}
 	
-	reset_cursor();
-	free(&fmt_str);
+    free(header);
 }
 
 void loop() {
 #if NOT_IMPLEMENTED
     if (Serial.available() > 0)
     {
-        uint32_t rx_byte = (uint32_t)Serial.read();
-        struct page *new_page = alloc_page(rx_byte);
-        if (new_page == NULL)
-            clear_screen();
-            oled.setTextColor(COLOR_RED);
-            oled.println("Out of Memory");
-        list_add(&top_page, new_page);
+        int rx_byte = (uint32_t)Serial.read();
     }
 #endif
 
 	clear_screen();
 	oled.setTextColor(COLOR_WHITE);
-	//draw_block(1, header);
-
-    if (head == NULL) {
-        oled.print("No pages to display");
-    }
-    delay(1000);
 
 	create_five_pages();
+    delay(1000);
 
+    struct page* lk = (struct page*) malloc(sizeof(struct page));
 
-	for (struct page* p = head; p->next != NULL; p = p->next) {
-		draw_block(p->page_number, p->chunk);
+    // skip first page
+    lk = head->next;
+
+    if (lk->next == NULL) {
+        oled.setTextColor(COLOR_WHITE);
+        oled.print("no pages to display");
+    }
+
+    while (1) {
+        clear_screen();
+		draw_block(lk->page_number, lk->chunk);
+        lk = lk->next;
+        delay(2*SECOND);
 	}
 
 	delay(REFRESH_RATE*3);
