@@ -3,8 +3,6 @@
 #include <Adafruit_SSD1351.h>
 #include <SPI.h>
 
-#define SERIAL_RX_BUFFER_SIZE 256
-
 #define FULL 1
 #define NOT_FULL 0
 
