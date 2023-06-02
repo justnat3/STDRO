@@ -3,8 +3,6 @@
 #include <Adafruit_SSD1351.h>
 #include <SPI.h>
 
-#define SERIAL_RX_BUFFER_SIZE 256
-
 #define FULL 1
 #define NOT_FULL 0
 
@@ -17,7 +15,7 @@
 #define CHUNK_OFFSET 10
 #define CHUNK_HEIGHT 11
 #define CHUNK_WIDTH 7
-#define CHUNK_SIZE 77
+#define CHUNK_SIZE 76
 
 static const uint8_t PIN_SCL_SCK = 13;
 static const uint8_t PIN_SDA_MOSI = 11;
@@ -47,7 +45,8 @@ static Adafruit_SSD1351 oled =
 typedef struct Page {
   int chunk[CHUNK_SIZE];
   short page_number;
-  uint32_t write_ptr;
+  short write_cursor;
+  short read_cursor;
   struct Page *next;
   struct Page *prev;
 } Page;
@@ -61,7 +60,7 @@ void add_page(Page *link) {
     halt_msg("no_head");
 
   link->page_number = head->prev->page_number += 1;
-  link->write_ptr = 0;
+  link->write_cursor = 0;
 
   // at the start, we only have head so the next node become the tail
   if (head->prev == nullptr) {
@@ -96,7 +95,7 @@ void free_pages(Page *head) {
     free(lk->prev);
   }
   free(head);
-  head = nullptr;
+
 }
 
 
@@ -106,50 +105,16 @@ void clear_screen() {
   oled.setTextColor(COLOR_WHITE);
 }
 
-char **chunk_to_ascii(int *ascii) {
-  char **str;
+char *byte_to_ascii(int byte_) {
 
-  for (size_t i = 0; i < CHUNK_SIZE; i++) {
-    int size = snprintf(nullptr, 0, "%02X", ascii[i]);
+  int size = snprintf(nullptr, 0, "%02X", byte_);
+  char *fmt_str = (char *)malloc(size + 1);
 
-    char *fmt_str = (char *)malloc(size + 1);
-    if (fmt_str == nullptr)
-      oom("2chunk_to_ascii");
+  if (fmt_str == nullptr)
+    oom("2chunk_to_ascii");
 
-    sprintf(fmt_str, "%02X", ascii[i]);
-    str[i] = fmt_str;
-  }
-
-  return str;
-}
-
-// TODO: REFACTOR
-void draw_block(Page *link) {
-  // render the header
-  char *header = (char *)malloc(14 * sizeof(char));
-  if (header == nullptr)
-    oom("draw_block");
-
-  sprintf(header, "Chunk Page: %i", link->page_number);
-  char **ascii = chunk_to_ascii(link->chunk);
-
-  // render the block
-  oled.println(header);
-  for (size_t i = 0; i < CHUNK_HEIGHT; i++) {
-    // set the cursor to the next row
-    oled.setCursor(0, oled.getCursorY() + CHUNK_OFFSET);
-
-    for (size_t j = 0; j < CHUNK_WIDTH; j++) {
-      oled.print(ascii[j]);
-      oled.print(" ");
-    }
-  }
-
-  // cleanup
-  for (size_t a = 0; a < CHUNK_SIZE; a++)
-    free(ascii[a]);
-  free(ascii);
-  free(header);
+  sprintf(fmt_str, "%02X", byte_);
+  return fmt_str;
 }
 
 int8_t chunk_full(Page *page) {
@@ -210,7 +175,7 @@ void setup() {
     oom("Setup head");
   head->next = nullptr;
   head->prev = nullptr;
-  head->write_ptr = 0;
+  head->write_cursor = 0;
   head->page_number = 0;
   alloc_empty_chunk(head);
 
@@ -221,73 +186,85 @@ void setup() {
   add_page(link);
 }
 
-
-void loop() {
-  Serial.write('a');
-  // if we have something to read, we can go ahead and read it into pages
-  if (Serial.available() > 0) {
-
-    while (Serial.available() > 0) {
-      int rx_byte = Serial.read();
-
-      // if we have reached the end of the page allocate a new page 
-      if (head->prev->write_ptr >= CHUNK_SIZE) {
-        halt_msg("needed to alloc a page");
-        Page *link = (Page *) malloc(sizeof(Page));
-        if (link == nullptr) 
-          oom("new chunk");
-        add_page(link);
-      }
-
-      // clear_screen();
-      // if (chunk_full(head->prev)) {
-      //   clear_screen();
-      //   oled.println(head->prev->page_number);
-      //   oled.println(head->prev->write_ptr);
-      //   oled.println("");
-      //   halt_msg("chunk full");
-      // }
-
-      head->prev->chunk[head->prev->write_ptr] = rx_byte;
-      head->prev->write_ptr++;
-      head->prev->chunk[head->prev->write_ptr] = CHUNK_MARKER;
-      if (head->prev->write_ptr == 62)
-        delay(2*SECOND);
-        return; // come back when the rx buffer is not going to overflow
-    }
+void write_to_avaliable_chunk(const int rx_byte) {
+  // if we have reached the end of the page allocate a new page 
+  if (head->prev->write_cursor >= CHUNK_SIZE) {
+    halt_msg("needed to alloc a page");
+    Page *link = (Page *) malloc(sizeof(Page));
+    if (link == nullptr) 
+      oom("new chunk");
+    add_page(link);
   }
 
-  if (head->prev->chunk[0] == CHUNK_MARKER) {
+  if (head->prev->write_cursor >= 77) {
     clear_screen();
-    oled.print("No chunks written");
-    delay(SECOND/2);
+    oled.println(head->prev->page_number);
+    oled.println(head->prev->write_cursor);
+    delay(2*SECOND);
+    oled.println("");
+    halt_msg("chunk full");
+  }
+
+  head->prev->chunk[head->prev->write_cursor] = rx_byte;
+  head->prev->write_cursor++;
+  head->prev->chunk[head->prev->write_cursor] = CHUNK_MARKER;
+}
+
+short width = 0;
+short height = 0;
+short written = 0;
+
+void loop() {
+  // if we have something to read, we can go ahead and read it into pages
+  while (Serial.available() > 0) 
+    write_to_avaliable_chunk(Serial.read());
+
+
+  if (current_lk == nullptr) 
+    current_lk = head->next;
+
+  // if we are at the chunk marker we dont need to read anymore
+  if (current_lk->chunk[current_lk->read_cursor] == CHUNK_MARKER 
+    || current_lk->chunk[0] == CHUNK_MARKER) {
+    current_lk->read_cursor = 0;
+    return; 
+  }
+
+  if (current_lk->read_cursor == CHUNK_SIZE-1 && current_lk->next == nullptr) {
+    current_lk->read_cursor = 0;
     return;
   }
 
-  if (head->next != nullptr)
-    current_lk = head->next;
+  current_lk->read_cursor++;
 
-  while (1) {
-    clear_screen();
-    // draw_block(current_lk);
+  //render the header
+  char *header = (char *)malloc(14 * sizeof(char));
+  if (header == nullptr)
+    oom("draw_block");
 
-    for (size_t i = 0; i < CHUNK_SIZE; i++) {
-      clear_screen();
-
-      // weve hit the end of what we can read in the chunk
-      if (current_lk->chunk[i] == CHUNK_MARKER) {
-        clear_screen();
-        oled.print("Chunk length: ");
-        oled.print(i);
-        halt();
-        break;
-      }
-
-      oled.print(current_lk->chunk[i]);
-    }
-
-    // if we dont have a next page, or if the next page is empty we dont need to read it
-    if (current_lk->next != nullptr && current_lk->next->chunk[0] != CHUNK_MARKER)
-      current_lk = current_lk->next;
+  if (!written) {
+    sprintf(header, "Chunk Page: %i", current_lk->page_number);
+    oled.println(header);
+    written = 1;
   }
+
+  if (height < CHUNK_HEIGHT) {
+    // set the cursor to the next row
+    oled.setCursor(0, oled.getCursorY() + CHUNK_OFFSET);
+  } else {
+    height = 0;
+  }
+
+  char *ascii_character = byte_to_ascii(current_lk->chunk[current_lk->read_cursor]);
+
+  if (width < CHUNK_WIDTH) {
+    oled.print(ascii_character);
+    oled.print(" ");
+    free(&ascii_character);
+  } else {
+    width = 0;
+  }
+
+  // I would rather see the character
+  delay(SECOND/4);
 }
